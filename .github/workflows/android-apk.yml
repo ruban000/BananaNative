@@ -47,7 +47,7 @@ jobs:
 
       - name: Build debug APK
         working-directory: android/app
-        run: ./gradlew --no-daemon -PnxPackStage="$RUNNER_TEMP/nx-pack/stage" assembleDebug
+        run: ./gradlew --no-daemon -PnxPackStage="$RUNNER_TEMP/nx-pack/stage" -PnxGames=040074A01BF12000,0400A3A01EE4C000 assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
