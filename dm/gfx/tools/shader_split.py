@@ -997,8 +997,7 @@ def snvn_records(d, a, b, label, e='>'):
         except zlib.error: continue
         if not z.eof or z.unused_data or len(y) != ncode + nctl: continue
         stages, k, c = [], 0, ncode
-        while c < len(y):
-            if y[c:c + 4] != CTL_MAGIC: red(f'{label} SNVN record @{i:#x}: no control section at {c:#x}')
+        while c < len(y):            if y[c:c + 4] != CTL_MAGIC: red(f'{label} SNVN record @{i:#x}: no control section at {c:#x}')
             n, nk = struct.unpack_from('<I', y, c + 0x20)[0], struct.unpack_from('<I', y, c + 0x704)[0]
             x, xn = struct.unpack_from('<II', y, c + 0x7e8)   # data GLSLC put after the section, not in its own length: 4 vertex stages of Metroid Prime Remastered's
             if xn and x >= n: n = x + xn                       # MaterialArchive.arc have 16 12-byte entries at +0x880 (+0x7e8 0x880, +0x7ec 0xc0, +0x7f0 16)
@@ -1997,8 +1996,7 @@ def ue_inline_shaders(d, label, out):
         if why: red(f'{label}: shader at {at:#x} ({st}): {why}')
         out.append((f'{label}#UE{at:x}', st, ctl, code))
     for m in ZLIB_HEAD.finditer(d):
-        i = m.start(); n = int.from_bytes(d[i - 4:i], 'little') if i >= 4 else 0
-        if not 2 <= n <= len(d) - i: continue
+        i = m.start(); n = int.from_bytes(d[i - 4:i], 'little') if i >= 4 else 0        if not 2 <= n <= len(d) - i: continue
         z = zlib.decompressobj()
         try: s = z.decompress(d[i:i + n])
         except zlib.error: continue
@@ -2997,7 +2995,6 @@ def pooled(ex, jobs, total, start=0, chunk=1, cache=None):
     return [r for first, _ in batches for r in kept[first]]
 
 
-
 def pooled_stream(ex, jobs, total, start=0, chunk=1, cache=None):
     """Phone path: yield each serial scan result immediately so main can merge it and release per-file data."""
     if not isinstance(ex, InProcess):
@@ -3135,14 +3132,19 @@ def main():
     os.makedirs(pkg, exist_ok=True)
     for f in os.listdir(pkg):
         if f.endswith('.bin'): os.unlink(os.path.join(pkg, f))
-    recs = collections.defaultdict(list); rows = []; facts = {}; stat = collections.Counter()
+    rows = []; facts = {}; stat = collections.Counter()
+    # Write each shader record immediately. Buffering every record in recs and then
+    # joining each file duplicates the complete shader package in RAM at peak use.
+    handles, counts = {}, collections.Counter()
     for key in sorted(keys, key=lambda k: (group(keys[k][0]), keys[k][0], k)):   # the same input gives byte-identical output
         where, st, ctl, code = keys[key]
         name = f'{st}_{group(where)}.bin'
         rec = bytearray(b'BTCDBTCD' + bytes(0x30)); struct.pack_into('<2I', rec, 0x28, len(ctl), len(code)); rec += code + ctl
         if rec.find(CTL_MAGIC) != 0x38 + len(code): red(f'key {key}: the control magic appears in the code area, dmsh_build would split the record wrongly')
         if rec.count(b'BTCDBTCD') != 1: red(f'key {key}: the record separator appears inside the record')
-        rows.append((name, len(recs[name]), STAGE_NAME[st], key, where)); recs[name].append(bytes(rec)); stat[st] += 1
+        if name not in handles: handles[name] = open(os.path.join(pkg, name), 'ab')
+        rows.append((name, counts[name], STAGE_NAME[st], key, where)); counts[name] += 1
+        handles[name].write(rec); stat[st] += 1
         if st == 'cs':
             # NVN2: the thread group at +0x58 (32 1 1 in Donkey Kong Bananza's effects); shared memory taken from +0x64, not yet seen nonzero (unverified)
             at = (0x58, 0x64) if nvn2_ctl(ctl) else (0x748, 0x754)
@@ -3150,14 +3152,12 @@ def main():
             if not x * y * z: red(f'compute shader {key}: control +{at[0]:#x} thread group is 0 ({where})')
             facts[key] = {'local': [x, y, z], 'shared': (sh + 15) // 16 * 16}
         if st in ('ts', 'ms'): facts[key] = mesh_facts(key, st, ctl, code, keys, mesh_pairs)
-    for name, rr in recs.items():
-        with open(os.path.join(pkg, name), 'wb') as f: f.write(b''.join(rr))
+    for f in handles.values(): f.close()
     with open(mapout, 'w') as f:
         kinds = ' / '.join(k for k, hit in (('BNSH / BAHS', any('#BNSH@' in r[4] or '#BAHS@' in r[4] for r in rows)), ('Unity Shader', any('#var' in r[4] and '#BNSH@' not in r[4] and '#MSHD#' not in r[4] and '#SDF#' not in r[4] and '#GLSLC@' not in r[4] and '#SNVN@' not in r[4] for r in rows)),
                                             ('Retro Studios SNVN', any('#SNVN@' in r[4] for r in rows)),
                                             ('MSHD', any('#MSHD#' in r[4] for r in rows)), ('GLSLC', any('#GLSLC@' in r[4] for r in rows)), ('RE Engine SDF', any('#SDF#' in r[4] for r in rows)),
-                                            ('MT Framework SPK', any('#MTSPK@' in r[4] for r in rows)), ('MonoGame MGFX', any('#MGFX@' in r[4] for r in rows)),
-                                            ('PlatinumGames shader objects', any('#PGSO' in r[4] for r in rows)),
+                                            ('MT Framework SPK', any('#MTSPK@' in r[4] for r in rows)), ('MonoGame MGFX', any('#MGFX@' in r[4] for r in rows)),                                            ('PlatinumGames shader objects', any('#PGSO' in r[4] for r in rows)),
                                             ('Snowdrop shader objects', any('#SNOWDROP@' in r[4] for r in rows)),
                                             ('Unreal Engine shader code archives', any('#UE' in r[4] for r in rows))) if hit)
         f.write(f'# kind: evidence  {NOTE} ({kinds} in RomFS + main) → control section + code area keys (dm/gfx/tools/shader_split.py)\n')
