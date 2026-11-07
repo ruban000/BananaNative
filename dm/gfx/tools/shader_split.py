@@ -57,7 +57,7 @@
 #   as `game.nup` or `game.nup:<selector>` is that package's romfs (the highest update's, else the base's, for a bare file)
 #   Environment DM_SPLIT_RESUME=<dir>: the scan resumes by file (ScanCache): a split stopped part way (the phone's thermal or battery pauses, a kill, a reboot) scans again only the files it had not finished
 # Pair table: (vertex key, pixel key) of every BNSH variation (every Unity program); dmsh_build uses it to give vertex shaders the outputs their pixel shaders read but they do not write (see dmsh_build.py vs_pad)
-import base64, collections, concurrent.futures as cf, hashlib, json, os, pickle, re, struct, subprocess, sys, time, zlib
+import base64, collections, concurrent.futures as cf, gc, hashlib, json, os, pickle, re, struct, subprocess, sys, time, zlib
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../tools'))
 from romfs import os, open, is_image
 import nup
@@ -2912,7 +2912,7 @@ def pooled(ex, jobs, total, start=0, chunk=1, cache=None):
     try:
         if isinstance(ex, InProcess):
             for first, b in todo:
-                kept[first] = r = scan_batch(b); cache.add(first, r); done += len(b)
+                kept[first] = r = scan_batch(b); cache.add(first, r); gc.collect(); done += len(b)
                 if done == start + len(jobs) or time.monotonic() - shown >= 0.5: print(f'progress: {done}/{total}', flush=True); shown = time.monotonic()
         else:
             futures = {ex.submit(scan_batch, b): first for first, b in todo}
@@ -2993,7 +2993,7 @@ def main():
     cache = ScanCache(rd, scan_digest(sys.argv[1:3] + sys.argv[8:], big + files + [(m, 'main') for m in main_v])) if rd else None
     with pool(J, common, {}, zdicts) as ex:
         n = len(big) + len(files)
-        results += pooled(ex, big, n, cache=cache) + pooled(ex, files, n, len(big), chunk=16, cache=cache)
+        results += pooled(ex, big, n, cache=cache) + pooled(ex, files, n, len(big), chunk=1, cache=cache)
     trees, defer = {}, []
     for rel, uniq, pr, extra in results:
         if extra == 'defer': defer.append(rel)
