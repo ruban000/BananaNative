@@ -798,7 +798,8 @@ def cpk_shaders(path, rel, ents, out):
     for e in ents:
         try: d = cpk.read(path, e)
         except (ValueError, IndexError) as x:   # a compression cpk.py does not decode: the entry is left out, and the split goes on
-            print(f'[RED] /{rel}/{e[0]}: {x}; not scanned', flush=True); continue        scan_blob(d, f'/{rel}/{e[0]}', out)
+            print(f'[RED] /{rel}/{e[0]}: {x}; not scanned', flush=True); continue
+        scan_blob(d, f'/{rel}/{e[0]}', out)
 
 ZIP = b'PK\x03\x04'
 def zip_jobs(files, parts=64):
@@ -1597,7 +1598,8 @@ def mgfx_effect(d, p, label):
         for _ in range(r.u8()):   # passes: name, annotations, vertex / pixel shader index, then the blend, depth-stencil and rasterizer states when present
             r.str(); no_annotations(); v, f = r.u8(), r.u8()
             if v != 255 and v >= len(out) or f != 255 and f >= len(out): red(f'{label} MGFX @{p:#x}: a pass names shader {v} / {f} of {len(out)}')
-            for n in (18, 25, 12):                if r.u8(): r.raw(n)    # in Bastion's 24 XNB files the length in front of 'MGFX' (EffectReader reads that many bytes) runs to the file's end, about 0xff0 bytes past the effect, all zeros
+            for n in (18, 25, 12):
+                if r.u8(): r.raw(n)    # in Bastion's 24 XNB files the length in front of 'MGFX' (EffectReader reads that many bytes) runs to the file's end, about 0xff0 bytes past the effect, all zeros
     if r.p > len(d) or label.endswith('.xnb') and d[r.p:].strip(b'\0'): red(f'{label} MGFX @{p:#x}: the effect ends at {r.p:#x}, the file at {len(d):#x}')
     return out
 
