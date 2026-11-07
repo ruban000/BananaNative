@@ -2992,7 +2992,7 @@ def main():
     for i, (romfs, mainnso) in enumerate(zip(romfs_v, main_v)):
         tag = os.path.basename(os.path.dirname(os.path.abspath(romfs))) if i else ''
         files += sorted((os.path.join(dp, f), (tag + '/' if tag else '') + os.path.relpath(os.path.join(dp, f), romfs)) for dp, _, fs in os.walk(romfs) for f in fs
-                        if not (GAME.id.lower() == '0400a3a01ee4c000' and os.path.relpath(os.path.join(dp, f), romfs).replace('\\\\', '/') == 'motor_asset_re/KIDS_PLATFORM_OUNCE/0x38f972af.fdata'))
+
         img = nso_image(mainnso)
         if not i:
             import unityfs
@@ -3026,7 +3026,8 @@ def main():
         files += sorted((os.path.join(dp, f), tag + '/' + os.path.relpath(os.path.join(dp, f), romfs)) for dp, _, fs in os.walk(romfs) for f in fs)
     zdicts = {k: v for r in romfs_v + dlc_v for k, v in zs_dicts(r).items()}   # Tears of the Kingdom's zstd dictionaries (zs_dicts)
     # First pass: every file; Unity bundles carry type trees, and the Shader trees are collected on the way. Second pass: Unity serialized files without type trees are scanned again with the borrowed trees
-    J = int(os.environ.get('J', '8'))
+    # Pokopia's large PDRK .fdata shader archive can inflate substantial entries; scan it alone to cap peak RAM.
+    J = 1 if GAME.id.lower() == '0400a3a01ee4c000' else int(os.environ.get('J', '8'))
     big = [j for p, r in files for j in (linkdata_jobs(p, r) or [])]   # Three Houses' 6.9 GB DATA1.bin: one job per range of entries, not one read of the whole file
     pak_jobs, paks = kpka_jobs(files)   # Monster Hunter Rise's PAKs: the newest copy of each path, in ranges of entries
     tr_jobs, trp = trpfs_jobs(files)   # Pokémon Legends: Z-A's Trinity packs (data.trpfs and its index data.trpfd), decoded by the game's own Oodle in the Mac host
