@@ -797,7 +797,6 @@ def pg_shader(d, label):
     if not why and st != 'cs' and sph_stage(code) != st: why = f'the SPH stage {sph_stage(code)} does not match the object\'s magic'
     if why: red(f'{label} ({st}): {why}')
     return [(f'{label}#PGSO', st, ctl, code)]
-
 def pg_sized_shader(d, label):
     """PlatinumGames' binding-table form: u32 prefix length (including itself), bindings, u32 code length, code, u32 control length, control. NieR:Automata's 1,371 objects in five DATs
     all have a 0x88-byte prefix and 0x880 control bytes; keys match the objects passed to NVN at boot. Recognize the section boundaries and NVN magics, without relying on a title or filename."""
@@ -1597,8 +1596,7 @@ def sumo_members(d, label):
     if d[17] != 2 or n not in (1, 2) or head != 44 + 4 * n or head > len(d): red(f'{label}: unsupported MuxFDMR layout')
     sizes = struct.unpack_from('<' + 'I' * n, d, 40)
     if head + sum(sizes) != len(d): red(f'{label}: MuxFDMR streams do not fit the file')
-    import zlib
-    for i, size in enumerate(sizes):
+    import zlib    for i, size in enumerate(sizes):
         expected = struct.unpack_from('<I', d, 24 + 8 * i)[0]
         z = zlib.decompressobj()
         raw = z.decompress(d[head:head + size], expected + 1)
@@ -2397,8 +2395,7 @@ def scan_blob(d, label, out, depth=0, left=None):
         if left is not None:   # charged by its header before it is decoded
             left[1] -= int.from_bytes(d[4:8], 'big')
             if left[1] < 0: red(f'{label}: the Yaz0 archive members expand to more than {NEST} times the file')
-        d = yaz0(d, label)
-    if left is None: left = [NEST * len(d)] * 2   # the file itself: what its archives' members may add up to, and what their Yaz0 may expand to
+        d = yaz0(d, label)    if left is None: left = [NEST * len(d)] * 2   # the file itself: what its archives' members may add up to, and what their Yaz0 may expand to
     else:
         left[0] -= stored
         if left[0] < 0: red(f'{label}: the archive members add up to more than {NEST} times the file (members that overlap)')
@@ -2857,6 +2854,11 @@ class ScanCache:
         if not all(first + i in self.have for i in range(n)): return None
         return [self.have[first + i] for i in range(n)]
 
+    def take_cached(self, first, n):
+        """Take a cached batch and release its in-memory references after the caller consumes it."""
+        if not all(first + i in self.have for i in range(n)): return None
+        return [self.have.pop(first + i) for i in range(n)]
+
 def _remove(p):   # a file, or a folder with what is in it
     if os.path.isdir(p) and not os.path.islink(p): __import__('shutil').rmtree(p)
     else: os.unlink(p)
@@ -2900,6 +2902,8 @@ def scan_digest(argv, jobs, sources=None):
     return h.hexdigest()
 
 def pooled(ex, jobs, total, start=0, chunk=1, cache=None):
+
+
     """scan_file over jobs in the pool, the results in job order, with a 'progress: <done>/<total>' line at most twice a second (the NSP script shows it as
     the stage's count). The count is of the jobs finished in any order: counted in order it would stall behind one slow archive range while the others finish.
     start is the index of the first job among all the split's jobs (the count's start and ScanCache's keys); batches the cache holds whole are not scanned again"""
@@ -2927,6 +2931,33 @@ def pooled(ex, jobs, total, start=0, chunk=1, cache=None):
     return [r for first, _ in batches for r in kept[first]]
 
 
+
+def pooled_stream(ex, jobs, total, start=0, chunk=1, cache=None):
+    """Phone path: yield each serial scan result immediately so main can merge it and release per-file data."""
+    if not isinstance(ex, InProcess):
+        yield from pooled(ex, jobs, total, start, chunk, cache)
+        return
+    cache = cache or ScanCache(None)
+    done, shown = 0, 0.0
+    try:
+        for i in range(0, len(jobs), chunk):
+            first, batch = start + i, jobs[i:i + chunk]
+            r = cache.take_cached(first, len(batch))
+            if r is None:
+                r = scan_batch(batch)
+                cache.add(first, r)
+            for item in r:
+                yield item
+            done += len(batch)
+            del r
+            gc.collect()
+            if done == len(jobs) or time.monotonic() - shown >= 0.5:
+                print(f'progress: {start + done}/{total}', flush=True)
+                shown = time.monotonic()
+    finally:
+        cache.flush()
+
+
 def main():
     romfs_l, main_l, pkg, mapout, factsout = sys.argv[1:6]
     pairsout = sys.argv[6] if len(sys.argv) > 6 else None
@@ -2937,7 +2968,21 @@ def main():
     romfs_v, main_v = [nup.default_romfs(r) for r in romfs_l.split(',')], main_l.split(',')
     dlc_v = [nup.default_romfs(r) for r in dlc_v]
     if len(romfs_v) != len(main_v): red(f'{len(romfs_v)} RomFS and {len(main_v)} main: they must pair one to one')
-    files, results, common, dumps = [], [], None, []
+    files, common, dumps = [], None, []
+    keys, per_src, pairs, trees, defer, bad = {}, collections.Counter(), set(), {}, [], []
+
+    def consume_result(result):
+        rel, uniq, pr, extra = result
+        pairs.update(pr)
+        if extra == 'defer': defer.append(rel)
+        elif isinstance(extra, dict): trees.update(extra)
+        elif isinstance(extra, tuple): bad.append(extra[1])
+        for key, value in uniq.items():
+            if key in keys:
+                if not same_shader(keys[key][2:4], value[2:4]): red(f'key {key} is the same but the control section or code area differs ({value[0]} / {keys[key][0]})')
+                continue
+            keys[key] = value
+            per_src[group(value[0])] += 1
     for i, (romfs, mainnso) in enumerate(zip(romfs_v, main_v)):
         tag = os.path.basename(os.path.dirname(os.path.abspath(romfs))) if i else ''
         files += sorted((os.path.join(dp, f), (tag + '/' if tag else '') + os.path.relpath(os.path.join(dp, f), romfs)) for dp, _, fs in os.walk(romfs) for f in fs)
@@ -2966,13 +3011,12 @@ def main():
         names = sorted(f for f in os.listdir(ued) if f.endswith('.ushaderbytecode')) if os.path.isdir(ued) else []
         if not names and uepak.unreal_paks(romfs, inline=False): red(f'the RomFS has Unreal paks, but there are no decoded shader code archives in {ued} (the NSP script writes them)')
         for nm in names: found += ue_shaders(open(os.path.join(ued, nm), 'rb').read(), f'/ue_shaders/{nm}')
-        results.append(('main', {skey(c, k): (w, s, c, k) for w, s, c, k in found}, var_pairs(found), {}))
+        consume_result(('main', {skey(c, k): (w, s, c, k) for w, s, c, k in found}, var_pairs(found), {}))
     for romfs in dlc_v:
         name = os.path.basename(os.path.normpath(romfs))
         tag = 'aoc/' + (name.removesuffix('.img') if is_image(romfs) else name)
         files += sorted((os.path.join(dp, f), tag + '/' + os.path.relpath(os.path.join(dp, f), romfs)) for dp, _, fs in os.walk(romfs) for f in fs)
     zdicts = {k: v for r in romfs_v + dlc_v for k, v in zs_dicts(r).items()}   # Tears of the Kingdom's zstd dictionaries (zs_dicts)
-    keys = {}
     # First pass: every file; Unity bundles carry type trees, and the Shader trees are collected on the way. Second pass: Unity serialized files without type trees are scanned again with the borrowed trees
     J = int(os.environ.get('J', '8'))
     big = [j for p, r in files for j in (linkdata_jobs(p, r) or [])]   # Three Houses' 6.9 GB DATA1.bin: one job per range of entries, not one read of the whole file
@@ -2993,34 +3037,26 @@ def main():
     cache = ScanCache(rd, scan_digest(sys.argv[1:3] + sys.argv[8:], big + files + [(m, 'main') for m in main_v])) if rd else None
     with pool(J, common, {}, zdicts) as ex:
         n = len(big) + len(files)
-        results += pooled(ex, big, n, cache=cache) + pooled(ex, files, n, len(big), chunk=1, cache=cache)
-    trees, defer = {}, []
-    for rel, uniq, pr, extra in results:
-        if extra == 'defer': defer.append(rel)
-        elif isinstance(extra, dict): trees.update(extra)
+        for result in pooled_stream(ex, big, n, cache=cache): consume_result(result)
+        for result in pooled_stream(ex, files, n, len(big), chunk=1, cache=cache): consume_result(result)
     if defer:
         # a hash no bundle supplied takes the layout unityfs.py has for it (KNOWN_TREES); only here, so files a bundle lends a tree to keep their place in the tables (Ace Attorney's built-ins)
         import unityfs
         for k in unityfs.KNOWN_TREES: trees.setdefault(k, unityfs.known_tree(*k))
         byrel = {r: p for p, r in files}
-        with pool(J, common, trees, zdicts) as ex: again = list(ex.map(scan_file, [(byrel[r], r) for r in defer]))
-        for rel, uniq, pr, extra in again:
-            if extra == 'defer': red(f'{rel}: Unity serialized file without type trees, and no bundle has a Shader type tree of the same hash to borrow')
-        results = [r for r in results if r[3] != 'defer'] + again
+        with pool(J, common, trees, zdicts) as ex:
+            for result in ex.map(scan_file, [(byrel[r], r) for r in defer]):
+                if result[3] == 'defer': red(f'{result[0]}: Unity serialized file without type trees, and no bundle has a Shader type tree of the same hash to borrow')
+                consume_result(result)
     if dumps:
-        have = {k for _, uniq, _, _ in results for k in uniq}
-        dumps = [d for d in dumps if skey(d[2], d[3]) not in have]
-        results.append(('nvn_shdump', {skey(c, k): (w, st, c, k) for w, st, c, k in dumps}, var_pairs(dumps), {}))
-    bad = [extra[1] for *_, extra in results if isinstance(extra, tuple)]
+        dumps = [d for d in dumps if skey(d[2], d[3]) not in keys]
+        pairs.update(var_pairs(dumps))
+        for where, st, ctl, code in dumps:
+            key = skey(ctl, code)
+            if key not in keys:
+                keys[key] = (where, st, ctl, code)
+                per_src[group(where)] += 1
     if bad: print(f'[RED] {len(bad)} file(s) could not be read, their shaders are left out (first: {bad[0]})', flush=True)   # build_ipa_from_nsp.py reads this line
-    per_src = collections.Counter(); pairs = set()
-    for rel, uniq, pr, _ in results:
-        pairs |= pr
-        for key, v in uniq.items():
-            if key in keys:
-                if not same_shader(keys[key][2:4], v[2:4]): red(f'key {key} is the same but the control section or code area differs ({v[0]} / {keys[key][0]})')
-                continue
-            keys[key] = v; per_src[group(v[0])] += 1
     mesh_pairs = {x for x in pairs if x[2:] in (('mesh',), ('task',))}; pairs -= mesh_pairs
     prog = {(a, b) for a, b, *t in pairs if t} - pairs; pairs = {x for x in pairs if len(x) == 2}
     sp, cover = separable_pairs(keys); pairs |= sp
