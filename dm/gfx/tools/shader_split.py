@@ -573,7 +573,6 @@ def kt_shaders(d, label, out):
     searched for GLSLC outputs, and its SARC archives (the Nintendo layouts, 2D UI) for BNSH, as everywhere else"""
     z = kt_gz(d)
     if z is not None: d = z
-    elif isinstance(d, memoryview): d = d.tobytes()
     if b'\x91\x68\x86\x19' in d: out.extend(glslc_shaders(d, label, need=False))
     if d[:4] == b'SARC' or b'BNSH\0\0\0\0' in d: scan_blob(d, label, out)
 
@@ -605,7 +604,7 @@ def linkdata_shaders(path, rel, rng, out):
             off, n, stored, comp = struct.unpack_from('<QQQQ', idx, i * 32)
             if n:
                 end = off + (stored if comp else n)
-                entry = memoryview(d)[off:end] if comp else d[off:end]
+                entry = d[off:end]
                 kt_shaders(entry, f'/{rel}#{i}', out)
 
 KPKA = b'KPKA'
