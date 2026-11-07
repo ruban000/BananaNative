@@ -42,12 +42,19 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" "cmake;3.22.1"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
+      # Keep the debug signing key across test builds so Android accepts APK updates.
+      - name: Restore stable test signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: pokopia-test-signing-v1
+
       - name: Build on-device packer stage
         run: zsh android/ondevice/build.sh "$RUNNER_TEMP/nx-pack" all
 
       - name: Build debug APK
         working-directory: android/app
-        run: ./gradlew --no-daemon -PnxPackStage="$RUNNER_TEMP/nx-pack/stage" -PnxGames=040074A01BF12000,0400A3A01EE4C000 -PnxApp=pokopia -PnxLabel="Banana Native Pokopia" assembleDebug
+        run: ./gradlew --no-daemon -PnxPackStage="$RUNNER_TEMP/nx-pack/stage" -PnxGames=040074A01BF12000,0400A3A01EE4C000 -PnxApp=pokopia -PnxLabel="Banana Native Pokopia" -PnxVersionCode=${{ github.run_number }} assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
