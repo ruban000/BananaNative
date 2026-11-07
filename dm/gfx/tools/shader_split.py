@@ -1596,8 +1596,10 @@ def sumo_members(d, label):
     if d[17] != 2 or n not in (1, 2) or head != 44 + 4 * n or head > len(d): red(f'{label}: unsupported MuxFDMR layout')
     sizes = struct.unpack_from('<' + 'I' * n, d, 40)
     if head + sum(sizes) != len(d): red(f'{label}: MuxFDMR streams do not fit the file')
-    import zlib    for i, size in enumerate(sizes):
-        expected = struct.unpack_from('<I', d, 24 + 8 * i)[0]        z = zlib.decompressobj()
+    import zlib
+    for i, size in enumerate(sizes):
+        expected = struct.unpack_from('<I', d, 24 + 8 * i)[0]
+        z = zlib.decompressobj()
         raw = z.decompress(d[head:head + size], expected + 1)
         if not z.eof or z.unused_data or len(raw) != expected: red(f'{label}: MuxFDMR stream {i} length does not match its header')
         yield f'#MUX{i}', raw
