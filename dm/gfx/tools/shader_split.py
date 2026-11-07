@@ -547,22 +547,44 @@ def idrk_data_to_file(d, a, b, flags, f):
     f.flush()
 
 
+PDRK_ENTRY = b'PDRKENTR'
+
+def pdrk_shader_jobs(files):
+    """Make each shader-bearing PDRK entry its own resumable scan job."""
+    from romfs import mmap
+    jobs, paths = [], set()
+    for path, rel in files:
+        with open(path, 'rb') as f:
+            if f.read(8) != PDRK: continue
+        paths.add(path)
+        with open(path, 'rb') as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as d:
+            for a, b, flags in idrk_entries(d):
+                if idrk_data(d, a, b, flags, 4) in (b'_S2G', b'_DOK'):
+                    jobs.append((path, rel, (PDRK_ENTRY, a, b, flags)))
+    return jobs, paths
+
+def idrk_pdrk_entry(path, label, a, b, flags, out):
+    """Inflate and scan one PDRK entry, keeping its peak memory separate from every other entry."""
+    from romfs import mmap
+    with open(path, 'rb') as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as d:
+        with tempfile.TemporaryFile() as raw:
+            idrk_data_to_file(d, a, b, flags, raw)
+            if not raw.tell(): return
+            with _mmap.mmap(raw.fileno(), 0, access=_mmap.ACCESS_READ) as inflated:
+                out.extend(glslc_shaders(inflated, label, need=False))
+
 def idrk_shaders(path, label, out):
-    """Koei Tecmo's KTGL shaders. PDRK entries are inflated to a temporary file in small blocks and memory-mapped for scanning, avoiding a full expanded-entry RAM copy."""
+    """Koei Tecmo's KTGL shaders. PDRK archives are scanned entry by entry."""
     from romfs import mmap
     with open(path, 'rb') as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as d:
         pdrk = d[:8] == PDRK
         for a, b, flags in idrk_entries(d):
             if idrk_data(d, a, b, flags, 4) not in (b'_S2G', b'_DOK'): continue
             label_at = f'{label}#IDRK@{a:#x}'
-            if not pdrk:
+            if pdrk:
+                idrk_pdrk_entry(path, label_at, a, b, flags, out)
+            else:
                 out.extend(glslc_shaders(idrk_data(d, a, b, flags), label_at, need=False))
-                continue
-            with tempfile.TemporaryFile() as raw:
-                idrk_data_to_file(d, a, b, flags, raw)
-                if not raw.tell(): continue
-                with _mmap.mmap(raw.fileno(), 0, access=_mmap.ACCESS_READ) as inflated:
-                    out.extend(glslc_shaders(inflated, label_at, need=False))
 
 G2S, SPKG = b'_S2G3000', b'SPKG'
 def kt_gz(d):
@@ -2670,6 +2692,10 @@ def scan_file_in(args):
     if ext in ('.data', '.patch', '.debug', '.nxpc') and os.path.exists(stem + '.dict'): return rel, {}, set(), {}   # read through its Next Level Games index (nlg_shaders)
     with open(path, 'rb') as f: head = f.read(16)
     found = []; trees = {}
+    if len(args) > 2 and args[2][0] == PDRK_ENTRY:
+        _, a, b, flags = args[2]
+        idrk_pdrk_entry(path, '/' + rel + f'#IDRK@{a:#x}', a, b, flags, found)
+        return rel, uniq_keys(found), var_pairs(found), trees
     if len(args) > 2 and args[2][0] == b'ARH1':
         arh_shaders(path, rel, args[2][1], found)
         return rel, uniq_keys(found), var_pairs(found), trees
@@ -3062,7 +3088,9 @@ def main():
     # First pass: every file; Unity bundles carry type trees, and the Shader trees are collected on the way. Second pass: Unity serialized files without type trees are scanned again with the borrowed trees
     # Pokopia's large PDRK .fdata shader archive can inflate substantial entries; scan it alone to cap peak RAM.
     J = 1 if GAME.id.lower() == '0400a3a01ee4c000' else int(os.environ.get('J', '8'))
+    pdrk_jobs, pdrks = pdrk_shader_jobs(files) if GAME.id.lower() == '0400a3a01ee4c000' else ([], set())
     big = [j for p, r in files for j in (linkdata_jobs(p, r) or [])]   # Three Houses' 6.9 GB DATA1.bin: one job per range of entries, not one read of the whole file
+    big += pdrk_jobs
     pak_jobs, paks = kpka_jobs(files)   # Monster Hunter Rise's PAKs: the newest copy of each path, in ranges of entries
     tr_jobs, trp = trpfs_jobs(files)   # Pokémon Legends: Z-A's Trinity packs (data.trpfs and its index data.trpfd), decoded by the game's own Oodle in the Mac host
     ue_jobs, uep = ue_legacy_jobs(files)   # Unreal paks with inline shaders: DRAGON QUEST XI S's legacy ones (the game's own LZ5 in the Mac host), OCTOPATH TRAVELER II's (Zlib)
@@ -3074,7 +3102,7 @@ def main():
     ah_jobs, arhs = arh_jobs(files)   # Monolith's ARH1/ARD archives and embedded XBC1/HCPS programs
     fb_jobs, fbs = frostbite_jobs(files)   # EA SPORTS FC 27's Frostbite bundles, Oodle Leviathan decoded by the game's own decoder in the Mac host
     big += pak_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + zp_jobs + ah_jobs + fb_jobs
-    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in zips and p not in arhs and p not in fbs]
+    files = [(p, r) for p, r in files if p not in pdrks and not linkdata_jobs(p, r) and p not in paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in zips and p not in arhs and p not in fbs]
     rd = os.environ.get('DM_SPLIT_RESUME')   # the phone's split (PackService): kept results from a stopped run
     # the inputs only (RomFS, main and DLC; not the output paths), and main's size and time with the jobs: main gives Unity's common strings to every scan
     cache = ScanCache(rd, scan_digest(sys.argv[1:3] + sys.argv[8:], big + files + [(m, 'main') for m in main_v])) if rd else None
