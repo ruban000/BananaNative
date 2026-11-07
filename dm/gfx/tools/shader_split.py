@@ -526,7 +526,12 @@ def idrk_data_to_file(d, a, b, flags, f):
     f.seek(0); f.truncate(0)
     new, lz4b = flags & 0x400000, flags & 0x500000 == 0x500000
     if not flags & 0x500000:
-        f.write(d[a:b])
+        # Do not make a multi-gigabyte bytes copy of an uncompressed PDRK entry.
+        # Copy from the mapped source in bounded 1-MiB chunks instead.
+        while a < b:
+            end = min(b, a + 0x100000)
+            f.write(d[a:end])
+            a = end
     else:
         while a + (10 if new else 4) <= b:
             if new: cs = struct.unpack_from('<H', d, a)[0]; a += 10
