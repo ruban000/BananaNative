@@ -57,7 +57,7 @@
 #   as `game.nup` or `game.nup:<selector>` is that package's romfs (the highest update's, else the base's, for a bare file)
 #   Environment DM_SPLIT_RESUME=<dir>: the scan resumes by file (ScanCache): a split stopped part way (the phone's thermal or battery pauses, a kill, a reboot) scans again only the files it had not finished
 # Pair table: (vertex key, pixel key) of every BNSH variation (every Unity program); dmsh_build uses it to give vertex shaders the outputs their pixel shaders read but they do not write (see dmsh_build.py vs_pad)
-import base64, collections, concurrent.futures as cf, gc, hashlib, json, os, pickle, re, struct, subprocess, sys, time, zlib
+import base64, collections, concurrent.futures as cf, gc, hashlib, json, os, pickle, re, struct, subprocess, sys, time, zlib, mmap as _mmap, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../tools'))
 from romfs import os, open, is_image
 import nup
@@ -520,15 +520,44 @@ def idrk_data(d, a, b, flags, head=None):
         out.append(r); a += cs
     return b''.join(out)
 
+def idrk_data_to_file(d, a, b, flags, f):
+    """Inflate one PDRK entry to a temporary file, one 16-KB block at a time."""
+    import zlib
+    f.seek(0); f.truncate(0)
+    new, lz4b = flags & 0x400000, flags & 0x500000 == 0x500000
+    if not flags & 0x500000:
+        f.write(d[a:b])
+    else:
+        while a + (10 if new else 4) <= b:
+            if new: cs = struct.unpack_from('<H', d, a)[0]; a += 10
+            else: cs = struct.unpack_from('<I', d, a)[0]; a += 4
+            if not cs: break
+            if a + cs > b: raise ValueError('PDRK entry chunk extends beyond its stored data')
+            block = d[a:a + cs]
+            if lz4b:
+                import lz4.block
+                raw = lz4.block.decompress(block, uncompressed_size=0x4000)
+            else: raw = zlib.decompress(block)
+            f.write(raw); a += cs
+    f.flush()
+
+
 def idrk_shaders(path, label, out):
-    """Koei Tecmo's KTGL keeps its shaders in G2S containers ('_S2G3000', type KTID 0x7bcd279f in Age of Calamity: 23,108 entries in three RDB files, 2.3 GB inflated), each a material's variations
-    as GLSLC compiler outputs (glslc_shaders). One '_DOK0000' container (type KTID 0x20a6a0bb, the engine's system resources; once in system.rdb.bin and once in the update's .bin1) holds 151 bare
-    GLSLC outputs without a G2S wrapper, among them 21 shaders the first battle draws. No other entry type holds any. The RDB files are up to 3.8 GB, so they are mapped rather than read,
-    and only entries whose data starts with one of those two magics are inflated"""
+    """Koei Tecmo's KTGL shaders. PDRK entries are inflated to a temporary file in small blocks and memory-mapped for scanning, avoiding a full expanded-entry RAM copy."""
     from romfs import mmap
     with open(path, 'rb') as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as d:
+        pdrk = d[:8] == PDRK
         for a, b, flags in idrk_entries(d):
-            if idrk_data(d, a, b, flags, 4) in (b'_S2G', b'_DOK'): out.extend(glslc_shaders(idrk_data(d, a, b, flags), f'{label}#IDRK@{a:#x}', need=False))
+            if idrk_data(d, a, b, flags, 4) not in (b'_S2G', b'_DOK'): continue
+            label_at = f'{label}#IDRK@{a:#x}'
+            if not pdrk:
+                out.extend(glslc_shaders(idrk_data(d, a, b, flags), label_at, need=False))
+                continue
+            with tempfile.TemporaryFile() as raw:
+                idrk_data_to_file(d, a, b, flags, raw)
+                if not raw.tell(): continue
+                with _mmap.mmap(raw.fileno(), 0, access=_mmap.ACCESS_READ) as inflated:
+                    out.extend(glslc_shaders(inflated, label_at, need=False))
 
 G2S, SPKG = b'_S2G3000', b'SPKG'
 def kt_gz(d):
