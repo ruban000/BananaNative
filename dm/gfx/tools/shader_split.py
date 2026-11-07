@@ -2396,9 +2396,11 @@ def scan_blob(d, label, out, depth=0, left=None):
         if left is not None:   # charged by its header before it is decoded
             left[1] -= int.from_bytes(d[4:8], 'big')
             if left[1] < 0: red(f'{label}: the Yaz0 archive members expand to more than {NEST} times the file')
-        d = yaz0(d, label)    if left is None: left = [NEST * len(d)] * 2   # the file itself: what its archives' members may add up to, and what their Yaz0 may expand to
+        d = yaz0(d, label)
+    if left is None: left = [NEST * len(d)] * 2   # the file itself: what its archives' members may add up to, and what their Yaz0 may expand to
     else:
-        left[0] -= stored        if left[0] < 0: red(f'{label}: the archive members add up to more than {NEST} times the file (members that overlap)')
+        left[0] -= stored
+        if left[0] < 0: red(f'{label}: the archive members add up to more than {NEST} times the file (members that overlap)')
     if d[:4] == b'SARC':
         for nm, m in sarc_members(d, label): scan_blob(m, f'{label}/{nm}', out, depth + 1, left)
         return
