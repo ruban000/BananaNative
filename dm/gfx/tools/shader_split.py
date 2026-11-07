@@ -539,16 +539,16 @@ def kt_gz(d):
     if len(d) < 16: return None
     cs, n, tot = struct.unpack_from('<III', d)
     if cs < 0x10000 or cs & (cs - 1) or not n or n != (tot + cs - 1) // cs or 12 + 4 * n > len(d): return None
-    sizes = struct.unpack_from(f'<{n}I', d, 12); o = (12 + 4 * n + 0x7f) & ~0x7f; out = []
+    sizes = struct.unpack_from(f'<{n}I', d, 12); o = (12 + 4 * n + 0x7f) & ~0x7f; out = bytearray()
     for i, s in enumerate(sizes):
         if o + s > len(d): return None
-        if s == min(cs, tot - i * cs): out.append(bytes(d[o:o + s]))
+        if s == min(cs, tot - i * cs): out.extend(d[o:o + s])
         else:
             ln = struct.unpack_from('<I', d, o)[0]
-            try: out.append(zlib.decompress(d[o + 4:o + 4 + ln]))
+            try: out.extend(zlib.decompress(d[o + 4:o + 4 + ln]))
             except zlib.error: return None
         o = (o + s + 0x7f) & ~0x7f
-    return b''.join(out)
+    return out
 
 def gust_gz(d):
     """Gust's chunked zlib (Atelier Ryza DX: 156 of its 4,112 *.elixir.gz files, among them PostEffect/pe_pack.elixir.gz with the post effects' 162 GLSLC outputs; the other 3,956 are plain
