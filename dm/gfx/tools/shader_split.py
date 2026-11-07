@@ -797,8 +797,7 @@ def pg_shader(d, label):
     if not why and st != 'cs' and sph_stage(code) != st: why = f'the SPH stage {sph_stage(code)} does not match the object\'s magic'
     if why: red(f'{label} ({st}): {why}')
     return [(f'{label}#PGSO', st, ctl, code)]
-def pg_sized_shader(d, label):
-    """PlatinumGames' binding-table form: u32 prefix length (including itself), bindings, u32 code length, code, u32 control length, control. NieR:Automata's 1,371 objects in five DATs
+def pg_sized_shader(d, label):    """PlatinumGames' binding-table form: u32 prefix length (including itself), bindings, u32 code length, code, u32 control length, control. NieR:Automata's 1,371 objects in five DATs
     all have a 0x88-byte prefix and 0x880 control bytes; keys match the objects passed to NVN at boot. Recognize the section boundaries and NVN magics, without relying on a title or filename."""
     if len(d) < 12: return []
     prefix = struct.unpack_from('<I', d)[0]
@@ -1597,8 +1596,7 @@ def sumo_members(d, label):
     sizes = struct.unpack_from('<' + 'I' * n, d, 40)
     if head + sum(sizes) != len(d): red(f'{label}: MuxFDMR streams do not fit the file')
     import zlib    for i, size in enumerate(sizes):
-        expected = struct.unpack_from('<I', d, 24 + 8 * i)[0]
-        z = zlib.decompressobj()
+        expected = struct.unpack_from('<I', d, 24 + 8 * i)[0]        z = zlib.decompressobj()
         raw = z.decompress(d[head:head + size], expected + 1)
         if not z.eof or z.unused_data or len(raw) != expected: red(f'{label}: MuxFDMR stream {i} length does not match its header')
         yield f'#MUX{i}', raw
@@ -2397,8 +2395,7 @@ def scan_blob(d, label, out, depth=0, left=None):
             if left[1] < 0: red(f'{label}: the Yaz0 archive members expand to more than {NEST} times the file')
         d = yaz0(d, label)    if left is None: left = [NEST * len(d)] * 2   # the file itself: what its archives' members may add up to, and what their Yaz0 may expand to
     else:
-        left[0] -= stored
-        if left[0] < 0: red(f'{label}: the archive members add up to more than {NEST} times the file (members that overlap)')
+        left[0] -= stored        if left[0] < 0: red(f'{label}: the archive members add up to more than {NEST} times the file (members that overlap)')
     if d[:4] == b'SARC':
         for nm, m in sarc_members(d, label): scan_blob(m, f'{label}/{nm}', out, depth + 1, left)
         return
@@ -2847,7 +2844,7 @@ class ScanCache:
                 self.checked = True
             try: self._write(f'{self.seq}.pkl', data)
             except OSError as e: self._off(e); return
-            self.have.update(self.new); self.new, self.seq = {}, self.seq + 1
+            self.new, self.seq = {}, self.seq + 1
         self.last = time.monotonic()
 
     def cached(self, first, n):   # the results of jobs first .. first + n - 1 when all of them are kept, else None
