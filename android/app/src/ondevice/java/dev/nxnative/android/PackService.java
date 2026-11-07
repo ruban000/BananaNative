@@ -1,5 +1,6 @@
 package dev.nxnative.android;
 
+import android.app.ActivityManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -438,7 +439,12 @@ public final class PackService extends Service {
         PackEngine.setenv("DM_GAME", j.titleId());
         PackEngine.setenv("DM_REWRITE_J", "1");
         PackEngine.setenv("NX_PACK_JOBS", String.valueOf(workers));
-        PackEngine.setenv("J", s.equals("split") ? "1" : String.valueOf(workers));   // the split's J is its process pool: 1 = in this process
+        // Shader translation has a much larger transient working set than the other steps. The old CPU-based
+        // worker count could run several 64-shader batches at once and let Android's low-memory killer stop :pack.
+        // Use available system RAM as a coarse safety signal, cap shader workers at two, and keep each batch small.
+        int shaderWorkers = shaderWorkers();
+        PackEngine.setenv("J", s.equals("split") ? "1" : s.equals("shaders") ? String.valueOf(shaderWorkers) : String.valueOf(workers));
+        if (s.equals("shaders")) PackEngine.setenv("DMSH_VK_BATCH", "4");
         PackEngine.setenv("DM_SPLIT_RESUME", splitScan.getPath());   // the split's kept scan results (only shader_split.py reads it)
         PackEngine.setenv("DM_PACKER_COMMIT", BuildConfig.NX_COMMIT);   // pack.tsv's packer: no repository on the phone to ask
         PackEngine.setenv("NX_PACK_WORK", od.getPath());
@@ -510,6 +516,19 @@ public final class PackService extends Service {
         j.stepState("split", "pending");
         return "the dump's shaders are not the ones this app knows for " + j.name() + " (" + Profile.versionName(j.version()) + ", " + have.getName()
                 + " differs). The dump may be incomplete or modified: dump the game again, then Retry";
+    }
+
+    /**
+     * Conservative shader-build concurrency. This is not a hard process memory limit (Android does not expose
+     * one to an ordinary app); it reduces simultaneous batch/validation work before the system gets pressured.
+     */
+    private int shaderWorkers() {
+        ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
+        ActivityManager am = getSystemService(ActivityManager.class);
+        if (am != null) am.getMemoryInfo(info);
+        long lowWater = 3L * 1024 * 1024 * 1024;
+        if (info.lowMemory || info.availMem < lowWater) return 1;
+        return Math.min(2, Math.max(1, Runtime.getRuntime().availableProcessors() - 2));
     }
 
     /** Reads the step's log as it grows: progress lines into the job, the last [RED] line for a failure's message */
