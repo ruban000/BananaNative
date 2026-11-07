@@ -1996,7 +1996,8 @@ def ue_inline_shaders(d, label, out):
         if why: red(f'{label}: shader at {at:#x} ({st}): {why}')
         out.append((f'{label}#UE{at:x}', st, ctl, code))
     for m in ZLIB_HEAD.finditer(d):
-        i = m.start(); n = int.from_bytes(d[i - 4:i], 'little') if i >= 4 else 0        if not 2 <= n <= len(d) - i: continue
+        i = m.start(); n = int.from_bytes(d[i - 4:i], 'little') if i >= 4 else 0
+        if not 2 <= n <= len(d) - i: continue
         z = zlib.decompressobj()
         try: s = z.decompress(d[i:i + n])
         except zlib.error: continue
