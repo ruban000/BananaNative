@@ -2992,7 +2992,8 @@ def main():
             per_src[group(value[0])] += 1
     for i, (romfs, mainnso) in enumerate(zip(romfs_v, main_v)):
         tag = os.path.basename(os.path.dirname(os.path.abspath(romfs))) if i else ''
-        files += sorted((os.path.join(dp, f), (tag + '/' if tag else '') + os.path.relpath(os.path.join(dp, f), romfs)) for dp, _, fs in os.walk(romfs) for f in fs)
+        files += sorted((os.path.join(dp, f), (tag + '/' if tag else '') + os.path.relpath(os.path.join(dp, f), romfs)) for dp, _, fs in os.walk(romfs) for f in fs
+                        if not (GAME.id.lower() == '0400a3a01ee4c000' and os.path.relpath(os.path.join(dp, f), romfs).replace('\\\\', '/') == 'motor_asset_re/KIDS_PLATFORM_OUNCE/0x38f972af.fdata'))
         img = nso_image(mainnso)
         if not i:
             import unityfs
