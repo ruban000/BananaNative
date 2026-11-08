@@ -32,12 +32,12 @@ using System.Text.Json.Nodes;
 
 static class SwshXlate
 {
-    // Read parsed JSON primitives directly. JsonNode scalar casts route through
-    // JsonSerializer metadata, which is unavailable in the NativeAOT translator.
-    static JsonElement Element(JsonNode node) => node.GetValue<JsonElement>();
-    static int Int(JsonNode node) => Element(node).GetInt32();
-    static string Str(JsonNode node) => Element(node).GetString();
-    static bool Bool(JsonNode node) => Element(node).GetBoolean();
+    // Read JSON scalar values without JsonSerializer metadata. The translator is
+    // NativeAOT-published with an empty metadata resolver, so JsonNode.GetValue<T>()
+    // and scalar casts can fail even for primitive values.
+    static int Int(JsonNode node) => int.Parse(node.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture);
+    static string Str(JsonNode node) => JsonDocument.Parse(node.ToJsonString()).RootElement.GetString();
+    static bool Bool(JsonNode node) => node.ToJsonString() == "true";
 
     // NVN's handle tables in c[2], byte offsets, 8 bytes per slot (one layout in every game, see dm/gfx/tools/dmsh_build.py): combined textures 0x20 + 8 r, images 0x120 + 8 r (8 slots),
     // separate textures 0x168 + 8 r (slot 128 + r), separate samplers 0x568 + 8 r
