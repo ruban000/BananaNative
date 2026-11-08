@@ -624,21 +624,27 @@ static void map_image(module_t *m, const char *dir) {
     m->base = (uint8_t *)base; install_key_page(m);
 }
 #else
-// Pokopia's SDK uses authenticated returns. On ARM64 hosts without address authentication,
-// RETAB is undefined (SIGILL); only this exact SDK build is eligible for the compatibility rewrite.
+// Pokopia's main and SDK modules use authenticated returns. On ARM64 hosts without
+// address authentication, RETAB is undefined (SIGILL); only these exact builds are eligible.
 #include <sys/auxv.h>
-static void android_sdk_pac_compat(module_t *m) {
-    static const char sdk_build[] = "cc7da00d672399efe7958790d17fae39";
-    const size_t crash_off = 0x1520bc;
+static void android_pac_compat(module_t *m) {
+    static const struct { const char *name, *build; size_t crash_off; } rows[] = {
+        {"sdk",  "cc7da00d672399efe7958790d17fae39", 0x1520bc},
+        {"main", "76a489f3bd3642fa5e18bd83d32c98ba", 0x1144594},
+    };
     const uint32_t retab = 0xd65f0fff, ret = 0xd65f03c0;
-    if (strcmp(m->name, "sdk") || strcmp(m->build_id, sdk_build)) return;
+    const size_t nrows = sizeof rows / sizeof rows[0];
+    const typeof(rows[0]) *row = NULL;
+    for (size_t i = 0; i < nrows; i++)
+        if (!strcmp(m->name, rows[i].name) && !strcmp(m->build_id, rows[i].build)) { row = &rows[i]; break; }
+    if (!row) return;
     if (getauxval(AT_HWCAP) & (1ul << 30)) {
-        LOG("SDK PAC: address authentication supported; keeping RETAB instructions");
+        LOG("%s PAC: address authentication supported; keeping RETAB instructions", m->name);
         return;
     }
-    if (crash_off + sizeof(uint32_t) > m->text_end ||
-        *(uint32_t *)(m->base + crash_off) != retab) {
-        LOG("[RED] SDK PAC: expected RETAB not found at sdk+%#zx; no compatibility rewrite", crash_off);
+    if (row->crash_off + sizeof(uint32_t) > m->text_end ||
+        *(uint32_t *)(m->base + row->crash_off) != retab) {
+        LOG("[RED] %s PAC: expected RETAB not found at %s+%#zx; no compatibility rewrite", m->name, m->name, row->crash_off);
         return;
     }
     unsigned changed = 0;
@@ -647,7 +653,7 @@ static void android_sdk_pac_compat(module_t *m) {
         if (*insn == retab) { *insn = ret; changed++; }
     }
     __builtin___clear_cache((char *)m->base, (char *)m->base + m->text_end);
-    LOG("SDK PAC: no address authentication; changed %u RETAB instructions to RET", changed);
+    LOG("%s PAC: no address authentication; changed %u RETAB instructions to RET", m->name, changed);
 }
 // The game's window size (profile key window_fn): two leaf functions of main return the width and the height (movz w0,#imm; ret: Donkey Kong Bananza's main+0x5bf770 / +0x5bf780).
 // DM_WINDOW_SIZE=<w>x<h> writes that size into them (the Android launcher's Game resolution); unset, empty or "original" writes the game's own size from the profile, so a pack
@@ -747,7 +753,7 @@ static void map_image(module_t *m, const char *dir) {
         if (a == MAP_FAILED) die("%s mmap %#llx", m->name, (unsigned long long)(pre + m->size));
         m->base = a + pre;
         memcpy(m->base, raw, fl); memcpy(a, raw + fl, sz - bl - fl); if (bl) memcpy(m->base + m->back_off, raw + sz - bl, bl);
-        android_sdk_pac_compat(m);
+        android_pac_compat(m);
         free(raw); install_key_page(m); window_apply(m);
         if (bl && mprotect(m->base + m->back_off, bl, PROT_READ | PROT_EXEC)) die("%s mprotect back patch", m->name);
         uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
@@ -759,7 +765,7 @@ static void map_image(module_t *m, const char *dir) {
     m->size = (sz + 0x3FFF) & ~0x3FFFull;
     m->base = mmap(NULL, m->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (m->base == MAP_FAILED) die("%s mmap", m->name);
-    memcpy(m->base, raw, sz); free(raw); android_sdk_pac_compat(m); install_key_page(m); window_apply(m);
+    memcpy(m->base, raw, sz); free(raw); android_pac_compat(m); install_key_page(m); window_apply(m);
     uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
     if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);
     uint64_t po = m->patch_off & ~0x3FFFull;
