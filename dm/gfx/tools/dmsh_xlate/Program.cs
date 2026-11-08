@@ -32,6 +32,13 @@ using System.Text.Json.Nodes;
 
 static class SwshXlate
 {
+    // Read parsed JSON primitives directly. JsonNode scalar casts route through
+    // JsonSerializer metadata, which is unavailable in the NativeAOT translator.
+    static JsonElement Element(JsonNode node) => node.GetValue<JsonElement>();
+    static int Int(JsonNode node) => Element(node).GetInt32();
+    static string Str(JsonNode node) => Element(node).GetString();
+    static bool Bool(JsonNode node) => Element(node).GetBoolean();
+
     // NVN's handle tables in c[2], byte offsets, 8 bytes per slot (one layout in every game, see dm/gfx/tools/dmsh_build.py): combined textures 0x20 + 8 r, images 0x120 + 8 r (8 slots),
     // separate textures 0x168 + 8 r (slot 128 + r), separate samplers 0x568 + 8 r
     const int TexBase = 0x20, ImgBase = 0x120, ImgSlots = 8, SepTexBase = 0x168, SepTexSlot0 = 128, SampBase = 0x568;
@@ -43,7 +50,7 @@ static class SwshXlate
     {
         readonly byte[] _code; readonly JsonObject _job; int _binding = 1; public readonly List<string> Notes = new();
         readonly byte[] _c1;
-        public Accessor(byte[] code, JsonObject job, Dictionary<int, SamplerType> imageTypes = null, Dictionary<int, SamplerType> textureTypes = null) { if (job["geometry_topology"] != null) _binding = 40; _code = code; _job = job; _c1 = job["c1"] is JsonNode h ? Convert.FromHexString((string)h) : Array.Empty<byte>(); _imageTypes = imageTypes; _textureTypes = textureTypes; }
+        public Accessor(byte[] code, JsonObject job, Dictionary<int, SamplerType> imageTypes = null, Dictionary<int, SamplerType> textureTypes = null) { if (job["geometry_topology"] != null) _binding = 40; _code = code; _job = job; _c1 = job["c1"] is JsonNode h ? Convert.FromHexString(Str(h)) : Array.Empty<byte>(); _imageTypes = imageTypes; _textureTypes = textureTypes; }
         // A texture query on an image handle (TXQ on c2 0x120 + 8 r: Unreal's GetDimensions on the RWTexture3D a compute shader writes) asks the type of that handle, which a table built
         // without the game's PC shaders does not answer, and the 2D default took a 3D image's depth from its width. The shader's own surface instructions give the image's type: the
         // first translation records that a query went unanswered (ImageQueryGuessed), and Main translates again with the types of the images it found, by c2 handle (ImageTypesOf)
@@ -75,10 +82,10 @@ static class SwshXlate
         }
         // c1 constant segment (the 0x100 bytes before the control segment in the shader package): the jump table of indirect jump BRX lives here (LDC c[1]); without it the translator cannot resolve jump targets and control flow goes wrong (particle shaders loop forever)
         public int QueryConstantBuffer1Size() => _c1.Length;
-        public int[] QueryAmpereComputeC0Layout() => _job["nvn2_cs"] is JsonArray l ? l.Select(v => (int)v).ToArray() : null;
+        public int[] QueryAmpereComputeC0Layout() => _job["nvn2_cs"] is JsonArray l ? l.Select(v => Int(v)).ToArray() : null;
         // A task / mesh program's layout (job "mesh", see the file header) and its GL depth constant
-        public int[] QueryMeshShaderLayout() => _job["mesh"] is JsonArray m ? m.Select(v => (int)v).ToArray() : null;
-        public int QueryMeshShaderGlDepthSpecId() => _job["gl_depth_spec"] is JsonNode n ? (int)n : -1;
+        public int[] QueryMeshShaderLayout() => _job["mesh"] is JsonArray m ? m.Select(v => Int(v)).ToArray() : null;
+        public int QueryMeshShaderGlDepthSpecId() => _job["gl_depth_spec"] is JsonNode n ? Int(n) : -1;
         public uint ConstantBuffer1Read(int offset) { if (offset >= 0 && offset + 4 <= _c1.Length) return BitConverter.ToUInt32(_c1, offset); Notes.Add($"c1 read out of bounds +{offset:X} (c1 length {_c1.Length})"); return 0; }
         // All resources go into set 0, each with a distinct binding number (spirv-cross emits them as one argument buffer); the translator's convention of giving the buffer of constant segment number index binding = index+1 is not relied on
         // The translator's own messages (a bindless read it resolved, or could not and removed, its result 0; an invalid encoding) go into the notes, marked, which dmsh_build.py counts apart
@@ -96,7 +103,7 @@ static class SwshXlate
         public int QueryTextureArrayLengthFromBuffer(int slot) => slot == 2 ? C2HandleWords : 32;
         public int QueryTextureArrayLengthFromPool() => 1 << 20;
 
-        string Get(string table, int slot) => _job[table] is JsonObject t && t[slot.ToString()] is JsonNode n ? (n is JsonObject o ? (string)o["type"] : (string)n) : null;
+        string Get(string table, int slot) => _job[table] is JsonObject t && t[slot.ToString()] is JsonNode n ? (n is JsonObject o ? Str(o["type"]) : Str(n)) : null;
         // A handle's texture or image slot, numbered as dmsh_build.py decode_tex numbers the reflection's (so an answer table row names the slot the reflection shows): the handle ORs two
         // c[2] words in no fixed order, so both are tried (only the first for a combined handle or a constant sampler); -1 when neither is in the table
         static int Slot(int handle, int cbufSlot, bool image)
@@ -144,50 +151,50 @@ static class SwshXlate
         public TextureFormat QueryTextureFormat(int handle, int cbufSlot = -1)
         {
             int slot = Slot(handle, cbufSlot, true);
-            string f = _job["img"] is JsonObject t && slot >= 0 && t[slot.ToString()] is JsonObject o ? (string)o["fmt"] : null;
+            string f = _job["img"] is JsonObject t && slot >= 0 && t[slot.ToString()] is JsonObject o ? Str(o["fmt"]) : null;
             if (f == null) { Notes.Add($"image handle {handle:X} slot {slot} has no format in the answer table, using R8G8B8A8Unorm"); return TextureFormat.R8G8B8A8Unorm; }
             return Enum.TryParse(f, true, out TextureFormat tf) ? tf : TextureFormat.R8G8B8A8Unorm;
         }
-        int Local(int i) => _job["local"] is JsonArray a && a.Count > i ? (int)a[i] : 1;
+        int Local(int i) => _job["local"] is JsonArray a && a.Count > i ? Int(a[i]) : 1;
         public int QueryComputeLocalSizeX() => Local(0);
         public int QueryComputeLocalSizeY() => Local(1);
         public int QueryComputeLocalSizeZ() => Local(2);
-        public int QueryComputeSharedMemorySize() => _job["shared"] is JsonNode n ? (int)n : 0;   // the shared memory size in the compute shader's control section (shader_split.py)
+        public int QueryComputeSharedMemorySize() => _job["shared"] is JsonNode n ? Int(n) : 0;   // the shared memory size in the compute shader's control section (shader_split.py)
         static AttributeType Attr(string s) => s switch { "sint" => AttributeType.Sint, "uint" => AttributeType.Uint, _ => AttributeType.Float };
         public bool QueryGeometryInputFixed() => _job["geometry_topology"] != null;
         // Compute lowering must emit passthrough vertices explicitly: Metal
         // cannot supply the native NV geometry-passthrough stage afterwards.
         // Job gs_passthrough = false (the Android Vulkan build, vk_android_build.py): the device has no SPV_NV_geometry_shader_passthrough, so the shader writes its vertices itself
-        public bool QueryHostSupportsGeometryShaderPassthrough() => _job["geometry_topology"] == null && !(_job["gs_passthrough"] is JsonNode gp && !(bool)gp);
+        public bool QueryHostSupportsGeometryShaderPassthrough() => _job["geometry_topology"] == null && !(_job["gs_passthrough"] is JsonNode gp && !Bool(gp));
         // Host answers only the Android Vulkan build sets (vk_android_build.py; android/SHADERS.md); a job without them gets Ryujinx's defaults, which the Apple libraries are built with.
         // Job subgroup_size: the device's fixed subgroup size (Adreno: 64). Maxwell code assumes 32-lane warps; with 64 Ryujinx splits ballots, masks and shuffles into 32-lane halves (InstEmitWarp, HelperFunctionManager)
         // Job shared_max: the device's maxComputeSharedMemorySize (DMSH_VK_SHARED_MAX). A compute program declaring more keeps its shared memory in a storage buffer, a slice per
         // workgroup (Ryujinx StructuredIr/SharedSpillInfo.cs); unset, no limit (Apple: dmsh_build.py shared_spill moves threadgroup arrays in the Metal source instead)
-        public int QueryHostComputeSharedMemoryMax() => _job["shared_max"] is JsonNode sm ? (int)sm : 0;
+        public int QueryHostComputeSharedMemoryMax() => _job["shared_max"] is JsonNode sm ? Int(sm) : 0;
         public (int Slice, int Workgroup)? SharedSpill;   // the res.json's "shared_spill": {"bytes": a workgroup's slice, "workgroup": bytes left in workgroup memory}
         public void RecordSharedSpill(int sliceBytes, int workgroupBytes) => SharedSpill = (sliceBytes, workgroupBytes);
-        public int QueryHostSubgroupSize() => _job["subgroup_size"] is JsonNode sg ? (int)sg : 32;
+        public int QueryHostSubgroupSize() => _job["subgroup_size"] is JsonNode sg ? Int(sg) : 32;
         // Job ssbo_align: the device's storage buffer offset alignment. Set, the host binds each storage buffer at its address rounded down to it, and the shader adds the
         // difference (GlobalToStorage: offset = address − (base & −align)); unset, a storage buffer starts exactly at its c0 address
         public bool QueryHasUnalignedStorageBuffer() => _job["ssbo_align"] != null;
-        public int QueryHostStorageBufferOffsetAlignment() => _job["ssbo_align"] is JsonNode al ? (int)al : 16;
+        public int QueryHostStorageBufferOffsetAlignment() => _job["ssbo_align"] is JsonNode al ? Int(al) : 16;
         public GpuGraphicsState QueryGraphicsState()
         {
             Array32<AttributeType> attr = default; Array8<AttributeType> fout = default;
-            if (_job["attr"] is JsonObject a) foreach (var kv in a) attr[int.Parse(kv.Key)] = Attr((string)kv.Value);
-            if (_job["fout"] is JsonObject f) foreach (var kv in f) fout[int.Parse(kv.Key)] = Attr((string)kv.Value);
-            bool earlyZ = _job["early_fragment_tests"] is JsonNode ez && (bool)ez;   // control +0x718 (dmsh_build.py job_for): [[early_fragment_tests]] in the MSL
-            return new GpuGraphicsState(earlyZ, _job["geometry_topology"] is JsonNode gt ? (InputTopology)(int)gt : InputTopology.Triangles, false, TessPatchType.Triangles, TessSpacing.EqualSpacing,
+            if (_job["attr"] is JsonObject a) foreach (var kv in a) attr[int.Parse(kv.Key)] = Attr(Str(kv.Value));
+            if (_job["fout"] is JsonObject f) foreach (var kv in f) fout[int.Parse(kv.Key)] = Attr(Str(kv.Value));
+            bool earlyZ = _job["early_fragment_tests"] is JsonNode ez && Bool(ez);   // control +0x718 (dmsh_build.py job_for): [[early_fragment_tests]] in the MSL
+            return new GpuGraphicsState(earlyZ, _job["geometry_topology"] is JsonNode gt ? (InputTopology)Int(gt) : InputTopology.Triangles, false, TessPatchType.Triangles, TessSpacing.EqualSpacing,
                 false, false, false, false /* depth not rewritten: dmsh_build.py adds the GL entry point (see the file header) */, false, 1f, AlphaTestOp.Always, 0f, attr, false, fout, false,
                 false /* no Y flip */, true /* origin upper-left */, false);
         }
         public bool QueryHostSupportsTextureShadowLod() => true;
         public bool QueryHostSupportsDepthClipControl() => false;   // Metal has no -1..1 clip control; the depth convention is not left to the translator, the rewrite is added per entry point in the MSL (see the file header)
         // Job reduced = true: relaxed precision - the translator marks NoContraction only on operations that must be exact (the default marks all: keeps the bit-exact results of Maxwell's separate rounding, at the cost of many optimization-disabled spvFMul etc. in the MSL)
-        public bool QueryHostReducedPrecision() => _job["reduced"] is JsonNode n && (bool)n;
+        public bool QueryHostReducedPrecision() => _job["reduced"] is JsonNode n && Bool(n);
         // Job softfloat64 = true: the host has no FP64, so Ryujinx's DoubleToFloat pass lowers double operations to float (Metal has no double type). Set only on the retry of a
         // shader whose first translation declared a 64-bit float (see Main): answering "no" for every shader would also drop the Float64 capability from all the others
-        public bool QueryHostSupportsShaderFloat64() => !(_job["softfloat64"] is JsonNode n && (bool)n);
+        public bool QueryHostSupportsShaderFloat64() => !(_job["softfloat64"] is JsonNode n && Bool(n));
     }
 
     // True when the SPIR-V declares a 64-bit float type (OpTypeFloat 64): SPIRV-Cross then writes double, which the Metal compiler rejects
@@ -230,13 +237,13 @@ static class SwshXlate
         int ok = 0, bad = 0;
         foreach (JsonObject job in jobs)
         {
-            string key = (string)job["key"];
+            string key = Str(job["key"]);
             try
             {
-                byte[] code = File.ReadAllBytes((string)job["code"]);
+                byte[] code = File.ReadAllBytes(Str(job["code"]));
                 var acc = new Accessor(code, job);
                 // Job debug = false: turn off DebugMode (DebugMode skips the AST optimizer and the output is full of temporaries; semantics unchanged)
-                var flags = TranslationFlags.MetalImageAtomics | (job["debug"] is JsonNode dbg && !(bool)dbg ? 0 : TranslationFlags.DebugMode) | ((string)job["stage"] switch { "cs" => TranslationFlags.Compute, "ts" => TranslationFlags.Compute | TranslationFlags.TaskShader, "ms" => TranslationFlags.Compute | TranslationFlags.MeshShader, _ => 0 }) | ((string)job["arch"] == "sm86" ? TranslationFlags.Ampere : 0);
+                var flags = TranslationFlags.MetalImageAtomics | (job["debug"] is JsonNode dbg && !Bool(dbg) ? 0 : TranslationFlags.DebugMode) | (Str(job["stage"]) switch { "cs" => TranslationFlags.Compute, "ts" => TranslationFlags.Compute | TranslationFlags.TaskShader, "ms" => TranslationFlags.Compute | TranslationFlags.MeshShader, _ => 0 }) | (Str(job["arch"]) == "sm86" ? TranslationFlags.Ampere : 0);
                 var ctx = Translator.CreateContext(0, acc, new TranslationOptions(TargetLanguage.Spirv, TargetApi.Vulkan, flags));
                 bool geometry = job["geometry_topology"] != null;
                 ShaderProgram p = ctx.Translate(geometry);
@@ -261,15 +268,15 @@ static class SwshXlate
                     var reader = Translator.CreateContext(0, new Accessor(code, job, imageTypes, textureTypes), new TranslationOptions(TargetLanguage.Spirv, TargetApi.Vulkan, flags));
                     File.WriteAllBytes(Path.Combine(outDir, key + ".reader.spv"), reader.GenerateVertexPassthroughForCompute().BinaryCode);
                 }
-                File.WriteAllBytes(Path.Combine(outDir, key + ".spv"), VertexCounterLowering.Apply(code, (string)job["stage"], p.BinaryCode, acc.Notes));
+                File.WriteAllBytes(Path.Combine(outDir, key + ".spv"), VertexCounterLowering.Apply(code, Str(job["stage"]), p.BinaryCode, acc.Notes));
                 var res = new JsonObject
                 {
-                    ["key"] = key, ["stage"] = (string)job["stage"], ["notes"] = new JsonArray(acc.Notes.ConvertAll(n => (JsonNode)n).ToArray()),
+                    ["key"] = key, ["stage"] = Str(job["stage"]), ["notes"] = new JsonArray(acc.Notes.ConvertAll(n => (JsonNode)n).ToArray()),
                     ["cbufs"] = new JsonArray(), ["sbufs"] = new JsonArray(), ["textures"] = new JsonArray(), ["images"] = new JsonArray(),
                     ["geometry_stride"] = geometry ? ctx.GetResourceReservations().OutputSizePerInvocation : 0,
                     ["uses_frag_coord"] = p.Info.UsesFragCoord, ["frag_out_map"] = p.Info.FragmentOutputMap,
                 };
-                if ((string)job["stage"] == "ms") res["mesh"] = MeshOutputs(job["mesh"].AsArray().Select(v => (int)v).ToArray());
+                if (Str(job["stage"]) == "ms") res["mesh"] = MeshOutputs(job["mesh"].AsArray().Select(v => Int(v)).ToArray());
                 foreach (var b in p.Info.CBuffers) res["cbufs"].AsArray().Add(new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot });
                 foreach (var b in p.Info.SBuffers) res["sbufs"].AsArray().Add(new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot, ["cb_slot"] = b.SbCbSlot, ["cb_offset"] = b.SbCbOffset, ["flags"] = (int)b.Flags });
                 foreach (var (list, name) in new[] { (p.Info.Textures, "textures"), (p.Info.Images, "images") })
