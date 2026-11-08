@@ -23,6 +23,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Verify Pokopia shader script syntax
+        run: python3 -m py_compile dm/gfx/tools/shader_split.py
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
