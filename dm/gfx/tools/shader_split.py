@@ -57,7 +57,7 @@
 #   as `game.nup` or `game.nup:<selector>` is that package's romfs (the highest update's, else the base's, for a bare file)
 #   Environment DM_SPLIT_RESUME=<dir>: the scan resumes by file (ScanCache): a split stopped part way (the phone's thermal or battery pauses, a kill, a reboot) scans again only the files it had not finished
 # Pair table: (vertex key, pixel key) of every BNSH variation (every Unity program); dmsh_build uses it to give vertex shaders the outputs their pixel shaders read but they do not write (see dmsh_build.py vs_pad)
-import base64, collections, concurrent.futures as cf, gc, hashlib, json, os, pickle, re, struct, subprocess, sys, time, zlib, mmap as _mmap, tempfile, sqlite3
+import base64, collections, concurrent.futures as cf, gc, hashlib, json, os, pickle, re, struct, subprocess, sys, time, zlib, mmap as _mmap, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../tools'))
 from romfs import os, open, is_image
 import nup
@@ -3029,36 +3029,40 @@ def pooled_stream(ex, jobs, total, start=0, chunk=1, cache=None):
 
 
 class ShaderStore:
-    """Disk-backed shader records: keep large control/code blobs out of the phone's RAM."""
+    """Append-only disk-backed shader records with a small in-memory key/offset index."""
     def __init__(self, path):
-        self.db = sqlite3.connect(path)
-        self.db.execute('PRAGMA journal_mode=OFF')
-        self.db.execute('PRAGMA synchronous=OFF')
-        self.db.execute('CREATE TABLE shaders (key TEXT PRIMARY KEY, source TEXT NOT NULL, stage TEXT NOT NULL, control BLOB NOT NULL, code BLOB NOT NULL)')
+        self.path = path
+        self.file = open(path, 'w+b')
+        self.index = {}
 
     def __contains__(self, key):
-        return self.db.execute('SELECT 1 FROM shaders WHERE key=?', (key,)).fetchone() is not None
+        return key in self.index
 
     def __getitem__(self, key):
-        row = self.db.execute('SELECT source, stage, control, code FROM shaders WHERE key=?', (key,)).fetchone()
-        if row is None: raise KeyError(key)
-        return row[0], row[1], bytes(row[2]), bytes(row[3])
+        try: offset, source, stage = self.index[key]
+        except KeyError: raise KeyError(key)
+        self.file.seek(offset)
+        control, code = pickle.load(self.file)
+        return source, stage, control, code
 
     def __setitem__(self, key, value):
-        self.db.execute('INSERT INTO shaders VALUES (?, ?, ?, ?, ?)', (key, value[0], value[1], sqlite3.Binary(value[2]), sqlite3.Binary(value[3])))
+        offset = self.file.tell()
+        pickle.dump((value[2], value[3]), self.file, protocol=pickle.HIGHEST_PROTOCOL)
+        self.index[key] = (offset, value[0], value[1])
 
     def __iter__(self):
-        return (row[0] for row in self.db.execute('SELECT key FROM shaders'))
+        return iter(self.index)
 
     def items(self):
-        for key, source, stage, control, code in self.db.execute('SELECT key, source, stage, control, code FROM shaders'):
-            yield key, (source, stage, bytes(control), bytes(code))
+        for key in self.index:
+            yield key, self[key]
 
     def locations(self):
-        return list(self.db.execute('SELECT key, source FROM shaders'))
+        return [(key, value[1]) for key, value in self.index.items()]
 
     def close(self):
-        self.db.close()
+        self.file.flush()
+        self.file.close()
 
 
 def main():
@@ -3073,7 +3077,7 @@ def main():
     if len(romfs_v) != len(main_v): red(f'{len(romfs_v)} RomFS and {len(main_v)} main: they must pair one to one')
     files, common, dumps = [], None, []
     os.makedirs(pkg, exist_ok=True)
-    key_db = os.path.join(pkg, '.shader-keys.sqlite3')
+    key_db = os.path.join(pkg, '.shader-keys.bin')
     if os.path.exists(key_db): os.unlink(key_db)
     keys, per_src, pairs, trees, defer, bad = ShaderStore(key_db), collections.Counter(), set(), {}, [], []
 
