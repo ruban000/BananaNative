@@ -122,7 +122,7 @@ def header(g):
         if len(rc) != 3 or not rc[0] or rc[0].startswith('/') or '..' in rc[0].split('/') or not rc[1].isdigit() or int(rc[1]) < 1 or not rc[2].strip() or any(c in ''.join(rc) for c in '|;'):
             sys.exit(f"{g.id}: romfs_check takes <path in the RomFS> <line, from 1> <expected line (no | or ;), or main for the version's main build ID>: {rc}")
     aw = g.get('android_window', '')   # the Android launcher's default Game resolution for this game when the player chose none (Prefs.gameWindow): one of Prefs.WINDOWS
-    if aw and aw not in ('1920x1080', 'original', '1280x720'): sys.exit(f'{g.id}: android_window must be 1920x1080, original or 1280x720: {aw}')
+    if aw and aw not in ('1920x1080', 'original', '1280x720', '960x540'): sys.exit(f'{g.id}: android_window must be 1920x1080, original, 1280x720 or 960x540: {aw}')
     pl = g.get('pad_layout', 'simple')   # the virtual gamepad's first layout (DmGamepad.m; afterwards whatever the player switched to in game is kept): simple = 2D, full = 3D (D-pad, right stick, L3 / R3),
     if pl not in ('simple', 'full', 'touch'): sys.exit(f'{g.id}: pad_layout must be simple, full or touch: {pl}')   # touch = Tap (no control: every touch goes to the game's touch screen)
     sks = g.get('shader_key_skip', '')   # control-section bytes the shader keys hash as zeros, <offset>+<length> (hle_nvn.c keys_hash, shader_split.py key_ctl; Batman: Arkham Knight: GLSLC's compile information, 0x770+0x78)
