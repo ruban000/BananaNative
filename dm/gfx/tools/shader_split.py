@@ -3041,8 +3041,12 @@ class ShaderStore:
     def __getitem__(self, key):
         try: offset, source, stage = self.index[key]
         except KeyError: raise KeyError(key)
-        self.file.seek(offset)
-        control, code = pickle.load(self.file)
+        # Use a separate reader: the writer stays append-only and its buffered
+        # cursor is never disturbed by lookups while merging duplicate shaders.
+        self.file.flush()
+        with io.open(self.path, 'rb') as reader:
+            reader.seek(offset)
+            control, code = pickle.load(reader)
         return source, stage, control, code
 
     def __setitem__(self, key, value):
