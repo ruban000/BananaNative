@@ -630,14 +630,11 @@ static void map_image(module_t *m, const char *dir) {
 static void android_pac_compat(module_t *m) {
     struct pac_row { const char *name, *build; size_t crash_off; };
     static const struct pac_row rows[] = {
-        {"sdk",  "cc7da00d672399efe7958790d17fae39", 0x1520bc},
-        {"main", "76a489f3bd3642fa5e18bd83d32c98ba", 0x1144594},
+        {"sdk",     "cc7da00d672399efe7958790d17fae39", 0x1520bc},
+        {"main",    "76a489f3bd3642fa5e18bd83d32c98ba", 0x1144594},
+        {"subsdk0", "9646a69cb1024ba919fddaa4265e6bc5", 0x180},
     };
     const uint32_t retab = 0xd65f0fff, ret = 0xd65f03c0;
-    if (!strcmp(m->name, "subsdk0")) {
-        uint32_t insn = m->text_end >= 0x184 ? *(uint32_t *)(m->base + 0x180) : 0;
-        LOG("subsdk0 PAC diagnostic: build_id=%s text_end=%#zx insn+0x180=%08x", m->build_id, m->text_end, insn);
-    }
     const size_t nrows = sizeof rows / sizeof rows[0];
     const struct pac_row *row = NULL;
     for (size_t i = 0; i < nrows; i++)
