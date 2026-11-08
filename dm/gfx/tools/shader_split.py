@@ -57,7 +57,7 @@
 #   as `game.nup` or `game.nup:<selector>` is that package's romfs (the highest update's, else the base's, for a bare file)
 #   Environment DM_SPLIT_RESUME=<dir>: the scan resumes by file (ScanCache): a split stopped part way (the phone's thermal or battery pauses, a kill, a reboot) scans again only the files it had not finished
 # Pair table: (vertex key, pixel key) of every BNSH variation (every Unity program); dmsh_build uses it to give vertex shaders the outputs their pixel shaders read but they do not write (see dmsh_build.py vs_pad)
-import base64, collections, concurrent.futures as cf, gc, hashlib, json, os, pickle, re, struct, subprocess, sys, time, zlib, mmap as _mmap, tempfile
+import base64, collections, concurrent.futures as cf, gc, hashlib, json, os, pickle, re, struct, subprocess, sys, time, zlib, mmap as _mmap, tempfile, sqlite3
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../tools'))
 from romfs import os, open, is_image
 import nup
@@ -2493,7 +2493,7 @@ def ps_inputs(code):
 
 def pixel_input_cover(shaders):
     """{pixel key: code} → a deterministic greedy cover of their generic inputs; ties take the smaller key."""
-    ins = {k: ps_inputs(code) for k, code in shaders.items()}
+    ins = dict(shaders)
     left, cover = set().union(*ins.values()) if ins else set(), []
     while left:
         k = min(ins, key=lambda k: (-len(ins[k] & left), k)); cover.append(k); left -= ins[k]
@@ -2509,9 +2509,15 @@ def separable_pairs(keys):
     from the pipeline state) have their real pairs only at draw time. vs_pad uses only the union of the locations the paired pixel shaders read, so every single-stage vertex shader is paired with
     a "cover": the fewest pixel shaders whose read locations together equal those of all pixel shaders (greedy, ties go to the smaller key); padded that way, a vertex shader links with any pixel shader.
     All pairs would be 376 × 375 rows; the cover needs a few rows × 376. No single-stage vertex shader, no cover"""
-    single = [v for v in keys if keys[v][1] == 'vs' and any(s in keys[v][0] for s in SINGLE_STAGE) and '#var' not in keys[v][0]]   # '#var': a GLSLC output of several stages (glslc_program)
+    single = []
+    pixel_inputs = {}
+    for key, (where, st, ctl, code) in keys.items():
+        if st == 'vs' and any(s in where for s in SINGLE_STAGE) and '#var' not in where:
+            single.append(key)
+        elif st == 'ps':
+            pixel_inputs[key] = ps_inputs(code)
     if not single: return set(), []
-    cover = pixel_input_cover({k: v[3] for k, v in keys.items() if v[1] == 'ps'})
+    cover = pixel_input_cover(pixel_inputs)
     return {(v, p) for v in single for p in cover}, cover
 
 SMASH_ARC = struct.pack('<Q', 0xABCDEF9876543210)   # smash_arc.MAGIC (scan_file reads only the first bytes, without importing the reader)
@@ -3022,6 +3028,39 @@ def pooled_stream(ex, jobs, total, start=0, chunk=1, cache=None):
         cache.flush()
 
 
+class ShaderStore:
+    """Disk-backed shader records: keep large control/code blobs out of the phone's RAM."""
+    def __init__(self, path):
+        self.db = sqlite3.connect(path)
+        self.db.execute('PRAGMA journal_mode=OFF')
+        self.db.execute('PRAGMA synchronous=OFF')
+        self.db.execute('CREATE TABLE shaders (key TEXT PRIMARY KEY, source TEXT NOT NULL, stage TEXT NOT NULL, control BLOB NOT NULL, code BLOB NOT NULL)')
+
+    def __contains__(self, key):
+        return self.db.execute('SELECT 1 FROM shaders WHERE key=?', (key,)).fetchone() is not None
+
+    def __getitem__(self, key):
+        row = self.db.execute('SELECT source, stage, control, code FROM shaders WHERE key=?', (key,)).fetchone()
+        if row is None: raise KeyError(key)
+        return row[0], row[1], bytes(row[2]), bytes(row[3])
+
+    def __setitem__(self, key, value):
+        self.db.execute('INSERT INTO shaders VALUES (?, ?, ?, ?, ?)', (key, value[0], value[1], sqlite3.Binary(value[2]), sqlite3.Binary(value[3])))
+
+    def __iter__(self):
+        return (row[0] for row in self.db.execute('SELECT key FROM shaders'))
+
+    def items(self):
+        for key, source, stage, control, code in self.db.execute('SELECT key, source, stage, control, code FROM shaders'):
+            yield key, (source, stage, bytes(control), bytes(code))
+
+    def locations(self):
+        return list(self.db.execute('SELECT key, source FROM shaders'))
+
+    def close(self):
+        self.db.close()
+
+
 def main():
     romfs_l, main_l, pkg, mapout, factsout = sys.argv[1:6]
     pairsout = sys.argv[6] if len(sys.argv) > 6 else None
@@ -3033,7 +3072,10 @@ def main():
     dlc_v = [nup.default_romfs(r) for r in dlc_v]
     if len(romfs_v) != len(main_v): red(f'{len(romfs_v)} RomFS and {len(main_v)} main: they must pair one to one')
     files, common, dumps = [], None, []
-    keys, per_src, pairs, trees, defer, bad = {}, collections.Counter(), set(), {}, [], []
+    os.makedirs(pkg, exist_ok=True)
+    key_db = os.path.join(pkg, '.shader-keys.sqlite3')
+    if os.path.exists(key_db): os.unlink(key_db)
+    keys, per_src, pairs, trees, defer, bad = ShaderStore(key_db), collections.Counter(), set(), {}, [], []
 
     def consume_result(result):
         rel, uniq, pr, extra = result
@@ -3137,8 +3179,8 @@ def main():
     # Write each shader record immediately. Buffering every record in recs and then
     # joining each file duplicates the complete shader package in RAM at peak use.
     handles, counts = {}, collections.Counter()
-    for key in sorted(keys, key=lambda k: (group(keys[k][0]), keys[k][0], k)):   # the same input gives byte-identical output
-        where, st, ctl, code = keys[key]
+    for key, where in sorted(keys.locations(), key=lambda item: (group(item[1]), item[1], item[0])):   # the same input gives byte-identical output
+        _, st, ctl, code = keys[key]
         name = f'{st}_{group(where)}.bin'
         rec = bytearray(b'BTCDBTCD' + bytes(0x30)); struct.pack_into('<2I', rec, 0x28, len(ctl), len(code)); rec += code + ctl
         if rec.find(CTL_MAGIC) != 0x38 + len(code): red(f'key {key}: the control magic appears in the code area, dmsh_build would split the record wrongly')
@@ -3182,6 +3224,9 @@ def main():
             f.write('# kind: evidence  supplemental vertex / pixel shader pairs (BAHS program variations and legacy Unity pass-input covers) for vertex output padding and the pipeline prebuild (generated by dm/gfx/tools/shader_split.py, do not edit): vertex key <TAB> pixel key\n')
             for a, b in sorted(prog - pairs): f.write(f'{a}\t{b}\n')
     print(f'shaders: {len(rows)} (' + ', '.join(f'{STAGE_NAME[s]} {n}' for s, n in sorted(stat.items())) + '); sources ' + ', '.join(f'{g} {n}' for g, n in per_src.most_common()) + f'; compute shader answers {len(facts)} rows' + (f'; variation pairs {len(pairs)}' if pairsout else ''))
+    keys.close()
+    try: os.unlink(key_db)
+    except OSError: pass
 
 if __name__ == '__main__':
     import nso
