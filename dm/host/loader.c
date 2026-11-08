@@ -628,13 +628,14 @@ static void map_image(module_t *m, const char *dir) {
 // address authentication, RETAB is undefined (SIGILL); only these exact builds are eligible.
 #include <sys/auxv.h>
 static void android_pac_compat(module_t *m) {
-    static const struct { const char *name, *build; size_t crash_off; } rows[] = {
+    struct pac_row { const char *name, *build; size_t crash_off; };
+    static const struct pac_row rows[] = {
         {"sdk",  "cc7da00d672399efe7958790d17fae39", 0x1520bc},
         {"main", "76a489f3bd3642fa5e18bd83d32c98ba", 0x1144594},
     };
     const uint32_t retab = 0xd65f0fff, ret = 0xd65f03c0;
     const size_t nrows = sizeof rows / sizeof rows[0];
-    const typeof(rows[0]) *row = NULL;
+    const struct pac_row *row = NULL;
     for (size_t i = 0; i < nrows; i++)
         if (!strcmp(m->name, rows[i].name) && !strcmp(m->build_id, rows[i].build)) { row = &rows[i]; break; }
     if (!row) return;
