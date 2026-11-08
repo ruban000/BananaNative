@@ -28,8 +28,8 @@ final class Prefs {
     /** The game's window size (Game resolution): DM_WINDOW_SIZE for the host (loader.c window_apply), "1920x1080" (Phone 1080p, the default), "original" (the game's own, 2880x1620 in Donkey Kong Bananza) or "1280x720" (Phone 720p: less GPU time a frame). DM_WINDOW_SIZE in env.txt overrides it for a run.
      *  A game whose profile has graphics_scale rows gets the graphics scale and operation mode that give the size instead (Profile.resolutionEnv).
      *  The stored value is the size itself; new sizes go at the end so the list's first entries keep their places. */
-    static final String[] WINDOWS = {"1920x1080", "original", "1280x720"}, WINDOW_NAMES = {"Phone 1080p (1920x1080)", "Original (the game's own size)", "Phone 720p (1280x720)"},
-            WINDOW_SHORT = {"1080p", "Original", "720p"};
+    static final String[] WINDOWS = {"1920x1080", "original", "1280x720", "960x540"}, WINDOW_NAMES = {"Phone 1080p (1920x1080)", "Original (the game's own size)", "Phone 720p (1280x720)", "540p (960x540)"},
+            WINDOW_SHORT = {"1080p", "Original", "720p", "540p"};
     /** A window size's name in the lists, its short name for a settings row (short); the value itself when it is none of WINDOWS (an env.txt-style size) */
     static String windowName(String v, boolean shortName) {
         int i = java.util.Arrays.asList(WINDOWS).indexOf(v);
