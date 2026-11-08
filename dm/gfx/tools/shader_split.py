@@ -3182,7 +3182,8 @@ def main():
     if cover: print(f'single-stage programs: {len({v for v, _ in sp}):,} vertex shaders are paired with a cover of {len(cover)} pixel shader(s) ({" ".join(cover)})')
     os.makedirs(pkg, exist_ok=True)
     for f in os.listdir(pkg):
-        if f.endswith('.bin'): os.unlink(os.path.join(pkg, f))
+        path = os.path.join(pkg, f)
+        if f.endswith('.bin') and path != key_db: os.unlink(path)
     rows = []; facts = {}; stat = collections.Counter()
     # Write each shader record immediately. Buffering every record in recs and then
     # joining each file duplicates the complete shader package in RAM at peak use.
