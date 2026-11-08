@@ -2398,7 +2398,8 @@ def unity_pass_pairs(o, programs):
                 pairs.update((v, f) for v in stages['vs'] for f in cover)
     return pairs
 
-def unity_shaders(d, label, out, trees):    """Shaders and compute shaders in a UnityFS bundle or serialized file → out and legacy pass pairs; raises NoTree when no type tree is available"""
+def unity_shaders(d, label, out, trees):
+    """Shaders and compute shaders in a UnityFS bundle or serialized file → out and legacy pass pairs; raises NoTree when no type tree is available"""
     import unityfs
     if COMMON is None: red(f'{label}: a Unity asset, but main has no Unity common string table')
     pairs = set()
