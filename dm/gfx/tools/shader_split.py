@@ -57,7 +57,7 @@
 #   as `game.nup` or `game.nup:<selector>` is that package's romfs (the highest update's, else the base's, for a bare file)
 #   Environment DM_SPLIT_RESUME=<dir>: the scan resumes by file (ScanCache): a split stopped part way (the phone's thermal or battery pauses, a kill, a reboot) scans again only the files it had not finished
 # Pair table: (vertex key, pixel key) of every BNSH variation (every Unity program); dmsh_build uses it to give vertex shaders the outputs their pixel shaders read but they do not write (see dmsh_build.py vs_pad)
-import base64, collections, concurrent.futures as cf, gc, hashlib, json, os, pickle, re, struct, subprocess, sys, time, zlib, mmap as _mmap, tempfile
+import base64, collections, concurrent.futures as cf, gc, hashlib, io, json, os, pickle, re, struct, subprocess, sys, time, zlib, mmap as _mmap, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../tools'))
 from romfs import os, open, is_image
 import nup
@@ -3032,7 +3032,7 @@ class ShaderStore:
     """Append-only disk-backed shader records with a small in-memory key/offset index."""
     def __init__(self, path):
         self.path = path
-        self.file = open(path, 'w+b')
+        self.file = io.open(path, 'w+b')
         self.index = {}
 
     def __contains__(self, key):
